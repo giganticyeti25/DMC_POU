@@ -1,377 +1,442 @@
+(* ============================================================================================
+   CONTROLADOR DMC MULTIMODELO - IMPLEMENTAÇÃO EM TEXTO ESTRUTURADO
+   --------------------------------------------------------------------------------------------
+   Objetivo: Controlar o nível de um sistema não linear utilizando 4 modelos lineares locais.
+   Plataforma: Altus XP340 (Mastertool IEC XE)
+   Autor: Sávio Fernandes de Oliveira Lopes
+   ============================================================================================ *)
+
+// --------------------------------------------------------------------------------------------
+// 1. BLOCO DE INICIALIZAÇÃO E SINTONIA (Executado apenas na partida)
+//    Calcula as matrizes dinâmicas (G) e os vetores de ganho (K) para os 4 modelos.
+// --------------------------------------------------------------------------------------------
 IF a < 2 THEN
-FOR i1 := 0 TO Max_Length-1 DO
-    Tempo_Atual_t := INT_TO_REAL(i1) * T;
+    // 1.1 Simulação da Resposta ao Degrau (Geração dos coeficientes 'g')
+    // O sistema simula a resposta de 4 modelos de 1ª ordem (tau_1 a tau_4)
+    FOR i1 := 0 TO Max_Length-1 DO
+        Tempo_Atual_t := INT_TO_REAL(i1) * T;
+        
+        // Modelo 1 (Região 100mm)
         gi1[i1] := K_1 * (1.0 - EXP(-Tempo_Atual_t / tau_1));
+        // Modelo 2 (Região 185mm)
         gi2[i1] := K_2 * (1.0 - EXP(-Tempo_Atual_t / tau_2));
+        // Modelo 3 (Região 290mm)
         gi3[i1] := K_3 * (1.0 - EXP(-Tempo_Atual_t / tau_3));
+        // Modelo 4 (Região 390mm)
         gi4[i1] := K_4 * (1.0 - EXP(-Tempo_Atual_t / tau_4));
-END_FOR;
-FOR i2 := 1 TO Horizonte_Predicao DO
-    FOR j2 := 1 TO Horizonte_Controle DO
-        k2 := i2 - j2 + 1;
-        IF k2 >= 1 THEN
-            G1[i2,j2] := gi1[k2];
-			G2[i2,j2] := gi2[k2];
-			G3[i2,j2] := gi3[k2];
-			G4[i2,j2] := gi4[k2];
-        ELSE 
-            G1[i2,j2] := 0.0;
-			G2[i2,j2] := 0.0;
-			G3[i2,j2] := 0.0;
-			G4[i2,j2] := 0.0;
-        END_IF
-    END_FOR;   
-END_FOR;
-FOR i3 := 1 TO Horizonte_Controle DO
-    FOR j3 := 1 TO Horizonte_Predicao DO
-        G1_TRANSPOSED[i3, j3] := G1[j3, i3];
-		G2_TRANSPOSED[i3, j3] := G2[j3, i3];
-		G3_TRANSPOSED[i3, j3] := G3[j3, i3];
-		G4_TRANSPOSED[i3, j3] := G4[j3, i3];
     END_FOR;
-END_FOR;
-FOR i4 := 1 TO Horizonte_Controle DO
-    FOR j4 := 1 TO Horizonte_Controle DO
-        soma1 := 0.0;
-		soma2 := 0.0;
-		soma3 := 0.0;
-		soma4 := 0.0;
-        FOR k4 := 1 TO Horizonte_Predicao DO
-            soma1 := soma1 + G1_TRANSPOSED[i4, k4] * G1[k4, j4];
-			soma2 := soma2 + G2_TRANSPOSED[i4, k4] * G2[k4, j4];
-			soma3 := soma3 + G3_TRANSPOSED[i4, k4] * G3[k4, j4];
-			soma4 := soma4 + G4_TRANSPOSED[i4, k4] * G4[k4, j4];
+
+    // 1.2 Montagem da Matriz Dinâmica G (Matriz de Toeplitz)
+    // Relaciona as variações de controle passadas com as saídas futuras.
+    // G tem dimensão (Horizonte_Predicao x Horizonte_Controle)
+    FOR i2 := 1 TO Horizonte_Predicao DO
+        FOR j2 := 1 TO Horizonte_Controle DO
+            k2 := i2 - j2 + 1;
+            IF k2 >= 1 THEN
+                // Preenche a diagonal e abaixo dela com os coeficientes da resposta ao degrau
+                G1[i2,j2] := gi1[k2];
+                G2[i2,j2] := gi2[k2];
+                G3[i2,j2] := gi3[k2];
+                G4[i2,j2] := gi4[k2];
+            ELSE 
+                // Elementos acima da diagonal são zero (causalidade)
+                G1[i2,j2] := 0.0;
+                G2[i2,j2] := 0.0;
+                G3[i2,j2] := 0.0;
+                G4[i2,j2] := 0.0;
+            END_IF
+        END_FOR;    
+    END_FOR;
+
+    // 1.3 Transposição da Matriz G (Necessário para o cálculo dos Mínimos Quadrados)
+    FOR i3 := 1 TO Horizonte_Controle DO
+        FOR j3 := 1 TO Horizonte_Predicao DO
+            G1_TRANSPOSED[i3, j3] := G1[j3, i3];
+            G2_TRANSPOSED[i3, j3] := G2[j3, i3];
+            G3_TRANSPOSED[i3, j3] := G3[j3, i3];
+            G4_TRANSPOSED[i3, j3] := G4[j3, i3];
         END_FOR;
-        A1_INNER[i4, j4] := soma1;
-		A2_INNER[i4, j4] := soma2;
-		A3_INNER[i4, j4] := soma3;
-		A4_INNER[i4, j4] := soma4;
     END_FOR;
-END_FOR;
-FOR i5 := 1 TO Horizonte_Controle DO
-    FOR j5 := 1 TO Horizonte_Controle DO
-        A1_MATRIX[i5, j5] := A1_INNER[i5, j5];
-		A2_MATRIX[i5, j5] := A2_INNER[i5, j5];
-		A3_MATRIX[i5, j5] := A3_INNER[i5, j5];
-		A4_MATRIX[i5, j5] := A4_INNER[i5, j5];
-        IF i5 = j5 THEN
-            A1_MATRIX[i5, j5] := A1_MATRIX[i5, j5] + (LAMBDA*5);
-			A2_MATRIX[i5, j5] := A2_MATRIX[i5, j5] + (LAMBDA*5);
-			A3_MATRIX[i5, j5] := A3_MATRIX[i5, j5] + (LAMBDA*10);
-			A4_MATRIX[i5, j5] := A4_MATRIX[i5, j5] + (LAMBDA*10);
-        END_IF;
-    END_FOR;
-END_FOR;
-FOR i6 := 1 TO Horizonte_Controle DO
-    FOR j6 := 1 TO Horizonte_Controle DO
-        IF i6 = j6 THEN
-            A1_INVERSE[i6, j6] := 1.0;
-			A2_INVERSE[i6, j6] := 1.0;
-			A3_INVERSE[i6, j6] := 1.0;
-			A4_INVERSE[i6, j6] := 1.0;
-        ELSE
-            A1_INVERSE[i6, j6] := 0.0;
-			A2_INVERSE[i6, j6] := 0.0;
-			A3_INVERSE[i6, j6] := 0.0;
-			A4_INVERSE[i6, j6] := 0.0;
-        END_IF;
-    END_FOR;
-END_FOR;
-FOR i7 := 1 TO Horizonte_Controle DO
-    pivo_lin1 := i7;
-	pivo_lin2 := i7;
-	pivo_lin3 := i7;
-	pivo_lin4 := i7;
-    FOR k8 := i7 + 1 TO Horizonte_Controle DO
-        IF ABS(A1_MATRIX[k8, i7]) > ABS(A1_MATRIX[pivo_lin1, i7]) THEN
-            pivo_lin1 := k8;
-        END_IF;
-		IF ABS(A2_MATRIX[k8, i7]) > ABS(A2_MATRIX[pivo_lin2, i7]) THEN
-            pivo_lin2 := k8;
-        END_IF;
-		IF ABS(A3_MATRIX[k8, i7]) > ABS(A3_MATRIX[pivo_lin3, i7]) THEN
-            pivo_lin3 := k8;
-        END_IF;
-		IF ABS(A4_MATRIX[k8, i7]) > ABS(A4_MATRIX[pivo_lin4, i7]) THEN
-            pivo_lin4 := k8;
-        END_IF;
-    END_FOR;
-    IF pivo_lin1 <> i7 THEN
-        FOR j9 := 1 TO Horizonte_Controle DO
-            temp_real1 := A1_MATRIX[i7, j9];
-            A1_MATRIX[i7, j9] := A1_MATRIX[pivo_lin1, j9];
-            A1_MATRIX[pivo_lin1, j9] := temp_real1;
-            temp_real1 := A1_INVERSE[i7, j9];
-            A1_INVERSE[i7, j9] := A1_INVERSE[pivo_lin1, j9];
-            A1_INVERSE[pivo_lin1, j9] := temp_real1;
+
+    // 1.4 Cálculo da Matriz Hessiana (H = G^T * G)
+    // Parte central da função de custo quadrática
+    FOR i4 := 1 TO Horizonte_Controle DO
+        FOR j4 := 1 TO Horizonte_Controle DO
+            soma1 := 0.0; soma2 := 0.0; soma3 := 0.0; soma4 := 0.0;
+            FOR k4 := 1 TO Horizonte_Predicao DO
+                soma1 := soma1 + G1_TRANSPOSED[i4, k4] * G1[k4, j4];
+                soma2 := soma2 + G2_TRANSPOSED[i4, k4] * G2[k4, j4];
+                soma3 := soma3 + G3_TRANSPOSED[i4, k4] * G3[k4, j4];
+                soma4 := soma4 + G4_TRANSPOSED[i4, k4] * G4[k4, j4];
+            END_FOR;
+            A1_INNER[i4, j4] := soma1;
+            A2_INNER[i4, j4] := soma2;
+            A3_INNER[i4, j4] := soma3;
+            A4_INNER[i4, j4] := soma4;
         END_FOR;
-    END_IF;
-	IF pivo_lin2 <> i7 THEN
-        FOR j9 := 1 TO Horizonte_Controle DO
-            temp_real2 := A2_MATRIX[i7, j9];
-            A2_MATRIX[i7, j9] := A2_MATRIX[pivo_lin2, j9];
-            A2_MATRIX[pivo_lin2, j9] := temp_real2;
-            temp_real2 := A2_INVERSE[i7, j9];
-            A2_INVERSE[i7, j9] := A2_INVERSE[pivo_lin2, j9];
-            A2_INVERSE[pivo_lin2, j9] := temp_real2;
-        END_FOR;
-    END_IF;
-	IF pivo_lin3 <> i7 THEN
-        FOR j9 := 1 TO Horizonte_Controle DO
-            temp_real3 := A3_MATRIX[i7, j9];
-            A3_MATRIX[i7, j9] := A3_MATRIX[pivo_lin3, j9];
-            A3_MATRIX[pivo_lin3, j9] := temp_real3;
-            temp_real3 := A3_INVERSE[i7, j9];
-            A3_INVERSE[i7, j9] := A3_INVERSE[pivo_lin3, j9];
-            A3_INVERSE[pivo_lin3, j9] := temp_real3;
-        END_FOR;
-    END_IF;
-	IF pivo_lin4 <> i7 THEN
-        FOR j9 := 1 TO Horizonte_Controle DO
-            temp_real4 := A4_MATRIX[i7, j9];
-            A4_MATRIX[i7, j9] := A4_MATRIX[pivo_lin4, j9];
-            A4_MATRIX[pivo_lin4, j9] := temp_real4;
-            temp_real4 := A4_INVERSE[i7, j9];
-            A4_INVERSE[i7, j9] := A4_INVERSE[pivo_lin4, j9];
-            A4_INVERSE[pivo_lin4, j9] := temp_real4;
-        END_FOR;
-    END_IF;
-    fator_divisao1 := A1_MATRIX[i7, i7];
-	fator_divisao2 := A2_MATRIX[i7, i7];
-	fator_divisao3 := A3_MATRIX[i7, i7];
-	fator_divisao4 := A4_MATRIX[i7, i7];
-    FOR j13 := 1 TO Horizonte_Controle DO
-        A1_MATRIX[i7, j13] := A1_MATRIX[i7, j13] / fator_divisao1;
-        A1_INVERSE[i7, j13] := A1_INVERSE[i7, j13] / fator_divisao1;
-		A2_MATRIX[i7, j13] := A2_MATRIX[i7, j13] / fator_divisao2;
-        A2_INVERSE[i7, j13] := A2_INVERSE[i7, j13] / fator_divisao2;
-		A3_MATRIX[i7, j13] := A3_MATRIX[i7, j13] / fator_divisao3;
-        A3_INVERSE[i7, j13] := A3_INVERSE[i7, j13] / fator_divisao3;
-		A4_MATRIX[i7, j13] := A4_MATRIX[i7, j13] / fator_divisao4;
-        A4_INVERSE[i7, j13] := A4_INVERSE[i7, j13] / fator_divisao4;
     END_FOR;
-    FOR k10 := 1 TO Horizonte_Controle DO
-        IF k10 <> i7 THEN
-            fator_subtracao1 := A1_MATRIX[k10, i7];
-			fator_subtracao2 := A2_MATRIX[k10, i7];
-			fator_subtracao3 := A3_MATRIX[k10, i7];
-			fator_subtracao4 := A4_MATRIX[k10, i7];
-            FOR j14 := 1 TO Horizonte_Controle DO
-                A1_MATRIX[k10, j14] := A1_MATRIX[k10, j14] - fator_subtracao1 * A1_MATRIX[i7, j14];
-                A1_INVERSE[k10, j14] := A1_INVERSE[k10, j14] - fator_subtracao1 * A1_INVERSE[i7, j14];
-				A2_MATRIX[k10, j14] := A2_MATRIX[k10, j14] - fator_subtracao2 * A2_MATRIX[i7, j14];
-                A2_INVERSE[k10, j14] := A2_INVERSE[k10, j14] - fator_subtracao2 * A2_INVERSE[i7, j14];
-				A3_MATRIX[k10, j14] := A3_MATRIX[k10, j14] - fator_subtracao3 * A3_MATRIX[i7, j14];
-                A3_INVERSE[k10, j14] := A3_INVERSE[k10, j14] - fator_subtracao3 * A3_INVERSE[i7, j14];
-				A4_MATRIX[k10, j14] := A4_MATRIX[k10, j14] - fator_subtracao4 * A4_MATRIX[i7, j14];
-                A4_INVERSE[k10, j14] := A4_INVERSE[k10, j14] - fator_subtracao4 * A4_INVERSE[i7, j14];
+
+    // 1.5 Adição do Fator de Regularização (Lambda)
+    // Penaliza o esforço de controle para evitar oscilações bruscas.
+    // A Matriz A final será (G^T * G + Lambda * I)
+    FOR i5 := 1 TO Horizonte_Controle DO
+        FOR j5 := 1 TO Horizonte_Controle DO
+            A1_MATRIX[i5, j5] := A1_INNER[i5, j5];
+            A2_MATRIX[i5, j5] := A2_INNER[i5, j5];
+            A3_MATRIX[i5, j5] := A3_INNER[i5, j5];
+            A4_MATRIX[i5, j5] := A4_INNER[i5, j5];
+            
+            // Adiciona Lambda apenas na diagonal principal
+            IF i5 = j5 THEN
+                A1_MATRIX[i5, j5] := A1_MATRIX[i5, j5] + (LAMBDA*5);  // Peso menor para modelos baixos
+                A2_MATRIX[i5, j5] := A2_MATRIX[i5, j5] + (LAMBDA*5);
+                A3_MATRIX[i5, j5] := A3_MATRIX[i5, j5] + (LAMBDA*10); // Peso maior para modelos altos
+                A4_MATRIX[i5, j5] := A4_MATRIX[i5, j5] + (LAMBDA*10);
+            END_IF;
+        END_FOR;
+    END_FOR;
+
+    // 1.6 Inicialização da Matriz Inversa como Identidade
+    FOR i6 := 1 TO Horizonte_Controle DO
+        FOR j6 := 1 TO Horizonte_Controle DO
+            IF i6 = j6 THEN
+                A1_INVERSE[i6, j6] := 1.0;
+                A2_INVERSE[i6, j6] := 1.0;
+                A3_INVERSE[i6, j6] := 1.0;
+                A4_INVERSE[i6, j6] := 1.0;
+            ELSE
+                A1_INVERSE[i6, j6] := 0.0;
+                A2_INVERSE[i6, j6] := 0.0;
+                A3_INVERSE[i6, j6] := 0.0;
+                A4_INVERSE[i6, j6] := 0.0;
+            END_IF;
+        END_FOR;
+    END_FOR;
+
+    // 1.7 Inversão da Matriz via Eliminação de Gauss-Jordan
+    // Calcula (A)^-1. Processo iterativo linha a linha.
+    FOR i7 := 1 TO Horizonte_Controle DO
+        // Pivoteamento (Encontrar o maior elemento da coluna para evitar erro numérico)
+        pivo_lin1 := i7; pivo_lin2 := i7; pivo_lin3 := i7; pivo_lin4 := i7;
+        
+        FOR k8 := i7 + 1 TO Horizonte_Controle DO
+            IF ABS(A1_MATRIX[k8, i7]) > ABS(A1_MATRIX[pivo_lin1, i7]) THEN pivo_lin1 := k8; END_IF;
+            IF ABS(A2_MATRIX[k8, i7]) > ABS(A2_MATRIX[pivo_lin2, i7]) THEN pivo_lin2 := k8; END_IF;
+            IF ABS(A3_MATRIX[k8, i7]) > ABS(A3_MATRIX[pivo_lin3, i7]) THEN pivo_lin3 := k8; END_IF;
+            IF ABS(A4_MATRIX[k8, i7]) > ABS(A4_MATRIX[pivo_lin4, i7]) THEN pivo_lin4 := k8; END_IF;
+        END_FOR;
+        
+        // Troca de linhas se necessário (Pivoteamento)
+        IF pivo_lin1 <> i7 THEN
+            FOR j9 := 1 TO Horizonte_Controle DO
+                // Troca na matriz original
+                temp_real1 := A1_MATRIX[i7, j9];
+                A1_MATRIX[i7, j9] := A1_MATRIX[pivo_lin1, j9];
+                A1_MATRIX[pivo_lin1, j9] := temp_real1;
+                // Troca na matriz inversa
+                temp_real1 := A1_INVERSE[i7, j9];
+                A1_INVERSE[i7, j9] := A1_INVERSE[pivo_lin1, j9];
+                A1_INVERSE[pivo_lin1, j9] := temp_real1;
             END_FOR;
         END_IF;
-    END_FOR;
-END_FOR;
-FOR i11 := 1 TO Horizonte_Controle DO
-    FOR j15 := 1 TO Horizonte_Predicao DO
-        soma5 := 0.0;
-		soma6 := 0.0;
-		soma7 := 0.0;
-		soma8 := 0.0;
-        FOR k11 := 1 TO Horizonte_Controle DO
-            soma5 := soma5 + A1_INVERSE[i11, k11] * G1_TRANSPOSED[k11, j15];
-			soma6 := soma6 + A2_INVERSE[i11, k11] * G2_TRANSPOSED[k11, j15];
-			soma7 := soma7 + A3_INVERSE[i11, k11] * G3_TRANSPOSED[k11, j15];
-			soma8 := soma8 + A4_INVERSE[i11, k11] * G4_TRANSPOSED[k11, j15];
+        // ... (Repete lógica de troca para modelos 2, 3 e 4) ...
+        IF pivo_lin2 <> i7 THEN
+            FOR j9 := 1 TO Horizonte_Controle DO
+                temp_real2 := A2_MATRIX[i7, j9];
+                A2_MATRIX[i7, j9] := A2_MATRIX[pivo_lin2, j9];
+                A2_MATRIX[pivo_lin2, j9] := temp_real2;
+                temp_real2 := A2_INVERSE[i7, j9];
+                A2_INVERSE[i7, j9] := A2_INVERSE[pivo_lin2, j9];
+                A2_INVERSE[pivo_lin2, j9] := temp_real2;
+            END_FOR;
+        END_IF;
+        IF pivo_lin3 <> i7 THEN
+            FOR j9 := 1 TO Horizonte_Controle DO
+                temp_real3 := A3_MATRIX[i7, j9];
+                A3_MATRIX[i7, j9] := A3_MATRIX[pivo_lin3, j9];
+                A3_MATRIX[pivo_lin3, j9] := temp_real3;
+                temp_real3 := A3_INVERSE[i7, j9];
+                A3_INVERSE[i7, j9] := A3_INVERSE[pivo_lin3, j9];
+                A3_INVERSE[pivo_lin3, j9] := temp_real3;
+            END_FOR;
+        END_IF;
+        IF pivo_lin4 <> i7 THEN
+            FOR j9 := 1 TO Horizonte_Controle DO
+                temp_real4 := A4_MATRIX[i7, j9];
+                A4_MATRIX[i7, j9] := A4_MATRIX[pivo_lin4, j9];
+                A4_MATRIX[pivo_lin4, j9] := temp_real4;
+                temp_real4 := A4_INVERSE[i7, j9];
+                A4_INVERSE[i7, j9] := A4_INVERSE[pivo_lin4, j9];
+                A4_INVERSE[pivo_lin4, j9] := temp_real4;
+            END_FOR;
+        END_IF;
+
+        // Normalização da linha do pivô (dividir pelo elemento diagonal)
+        fator_divisao1 := A1_MATRIX[i7, i7];
+        fator_divisao2 := A2_MATRIX[i7, i7];
+        fator_divisao3 := A3_MATRIX[i7, i7];
+        fator_divisao4 := A4_MATRIX[i7, i7];
+        
+        FOR j13 := 1 TO Horizonte_Controle DO
+            A1_MATRIX[i7, j13] := A1_MATRIX[i7, j13] / fator_divisao1;
+            A1_INVERSE[i7, j13] := A1_INVERSE[i7, j13] / fator_divisao1;
+            A2_MATRIX[i7, j13] := A2_MATRIX[i7, j13] / fator_divisao2;
+            A2_INVERSE[i7, j13] := A2_INVERSE[i7, j13] / fator_divisao2;
+            A3_MATRIX[i7, j13] := A3_MATRIX[i7, j13] / fator_divisao3;
+            A3_INVERSE[i7, j13] := A3_INVERSE[i7, j13] / fator_divisao3;
+            A4_MATRIX[i7, j13] := A4_MATRIX[i7, j13] / fator_divisao4;
+            A4_INVERSE[i7, j13] := A4_INVERSE[i7, j13] / fator_divisao4;
         END_FOR;
-        K1_MATRIX_FULL[i11, j15] := soma5;
-		K2_MATRIX_FULL[i11, j15] := soma6;
-		K3_MATRIX_FULL[i11, j15] := soma7;
-		K4_MATRIX_FULL[i11, j15] := soma8;
+
+        // Eliminação dos outros elementos da coluna
+        FOR k10 := 1 TO Horizonte_Controle DO
+            IF k10 <> i7 THEN
+                fator_subtracao1 := A1_MATRIX[k10, i7];
+                fator_subtracao2 := A2_MATRIX[k10, i7];
+                fator_subtracao3 := A3_MATRIX[k10, i7];
+                fator_subtracao4 := A4_MATRIX[k10, i7];
+                FOR j14 := 1 TO Horizonte_Controle DO
+                    A1_MATRIX[k10, j14] := A1_MATRIX[k10, j14] - fator_subtracao1 * A1_MATRIX[i7, j14];
+                    A1_INVERSE[k10, j14] := A1_INVERSE[k10, j14] - fator_subtracao1 * A1_INVERSE[i7, j14];
+                    A2_MATRIX[k10, j14] := A2_MATRIX[k10, j14] - fator_subtracao2 * A2_MATRIX[i7, j14];
+                    A2_INVERSE[k10, j14] := A2_INVERSE[k10, j14] - fator_subtracao2 * A2_INVERSE[i7, j14];
+                    A3_MATRIX[k10, j14] := A3_MATRIX[k10, j14] - fator_subtracao3 * A3_MATRIX[i7, j14];
+                    A3_INVERSE[k10, j14] := A3_INVERSE[k10, j14] - fator_subtracao3 * A3_INVERSE[i7, j14];
+                    A4_MATRIX[k10, j14] := A4_MATRIX[k10, j14] - fator_subtracao4 * A4_MATRIX[i7, j14];
+                    A4_INVERSE[k10, j14] := A4_INVERSE[k10, j14] - fator_subtracao4 * A4_INVERSE[i7, j14];
+                END_FOR;
+            END_IF;
+        END_FOR;
     END_FOR;
-END_FOR;
-FOR j16 := 1 TO Horizonte_Predicao DO
-    K1_VECTOR[j16] := K1_MATRIX_FULL[1, j16];
-	K2_VECTOR[j16] := K2_MATRIX_FULL[1, j16];
-	K3_VECTOR[j16] := K3_MATRIX_FULL[1, j16];
-	K4_VECTOR[j16] := K4_MATRIX_FULL[1, j16];
-END_FOR;
 
+    // 1.8 Cálculo da Matriz de Ganhos Finais K = (A^-1 * G^T)
+    FOR i11 := 1 TO Horizonte_Controle DO
+        FOR j15 := 1 TO Horizonte_Predicao DO
+            soma5 := 0.0; soma6 := 0.0; soma7 := 0.0; soma8 := 0.0;
+            FOR k11 := 1 TO Horizonte_Controle DO
+                soma5 := soma5 + A1_INVERSE[i11, k11] * G1_TRANSPOSED[k11, j15];
+                soma6 := soma6 + A2_INVERSE[i11, k11] * G2_TRANSPOSED[k11, j15];
+                soma7 := soma7 + A3_INVERSE[i11, k11] * G3_TRANSPOSED[k11, j15];
+                soma8 := soma8 + A4_INVERSE[i11, k11] * G4_TRANSPOSED[k11, j15];
+            END_FOR;
+            K1_MATRIX_FULL[i11, j15] := soma5;
+            K2_MATRIX_FULL[i11, j15] := soma6;
+            K3_MATRIX_FULL[i11, j15] := soma7;
+            K4_MATRIX_FULL[i11, j15] := soma8;
+        END_FOR;
+    END_FOR;
 
-	FOR i17 := 1 TO Nm DO
-		duf1[i17] := 0;
-		duf2[i17] := 0;
-		duf3[i17] := 0;
-		duf4[i17] := 0;
-		IF i17 <= Horizonte_Predicao THEN
-			f1[i17] := 0;
-			f2[i17] := 0;
-			f3[i17] := 0;
-			f4[i17] := 0;
-		END_IF;
-	END_FOR;	
-	a := 10;
+    // 1.9 Extração do Vetor de Controle (Primeira linha da matriz K)
+    // O DMC calcula uma sequência de controles, mas usamos apenas o primeiro elemento.
+    FOR j16 := 1 TO Horizonte_Predicao DO
+        K1_VECTOR[j16] := K1_MATRIX_FULL[1, j16];
+        K2_VECTOR[j16] := K2_MATRIX_FULL[1, j16];
+        K3_VECTOR[j16] := K3_MATRIX_FULL[1, j16];
+        K4_VECTOR[j16] := K4_MATRIX_FULL[1, j16];
+    END_FOR;
+
+    // 1.10 Inicialização dos Vetores de Histórico
+    FOR i17 := 1 TO Nm DO
+        duf1[i17] := 0; duf2[i17] := 0; duf3[i17] := 0; duf4[i17] := 0;
+        IF i17 <= Horizonte_Predicao THEN
+            f1[i17] := 0; f2[i17] := 0; f3[i17] := 0; f4[i17] := 0;
+        END_IF;
+    END_FOR;    
+    
+    // Trava para impedir re-execução da inicialização
+    a := 10; 
 END_IF;
+
+// --------------------------------------------------------------------------------------------
+// 2. CICLO DE CONTROLE PRINCIPAL (Executado ciclicamente)
+// --------------------------------------------------------------------------------------------
 IF B_liga AND NOT(B_desliga) THEN
-		FOR j17 := 1 TO Nm DO
+    
+    // 2.1 Cálculo da Resposta Livre (Predição)
+    // Estima a saída futura baseada nas ações de controle passadas (Convolução)
+    FOR j17 := 1 TO Horizonte_Predicao DO
+         // Cálculo dos vetores de correção temporal da resposta ao degrau
          FOR i18:=1 TO Nm-Horizonte_Predicao DO
              vect_g1[i18]:=gi1[j17+i18] - gi1[i18];
-			 vect_g2[i18]:=gi2[j17+i18] - gi2[i18];
-			 vect_g3[i18]:=gi3[j17+i18] - gi3[i18];
-			 vect_g4[i18]:=gi4[j17+i18] - gi4[i18];
+             vect_g2[i18]:=gi2[j17+i18] - gi2[i18];
+             vect_g3[i18]:=gi3[j17+i18] - gi3[i18];
+             vect_g4[i18]:=gi4[j17+i18] - gi4[i18];
          END_FOR
+         // Ajuste para o final do horizonte de modelo
          FOR i19:= Nm-Horizonte_Predicao+1 TO Nm DO
              vect_g1[i19]:=gi1[Nm]-gi1[i19];
-			 vect_g2[i19]:=gi2[Nm]-gi2[i19];
-			 vect_g3[i19]:=gi3[Nm]-gi3[i19];
-			 vect_g4[i19]:=gi4[Nm]-gi4[i19];
+             vect_g2[i19]:=gi2[Nm]-gi2[i19];
+             vect_g3[i19]:=gi3[Nm]-gi3[i19];
+             vect_g4[i19]:=gi4[Nm]-gi4[i19];
          END_FOR
-		 vectg1duf := 0.0;
-		 vectg2duf := 0.0;
-		 vectg3duf := 0.0;
-		 vectg4duf := 0.0;
-		 FOR i20 := 1 TO Nm DO
-		 	 vectg1duf := vectg1duf + vect_g1[i20]*duf1[i20];
-			 vectg2duf := vectg2duf + vect_g2[i20]*duf2[i20];
-			 vectg3duf := vectg3duf + vect_g3[i20]*duf3[i20];
-			 vectg4duf := vectg4duf + vect_g4[i20]*duf4[i20];
-		 END_FOR
+         
+         // Soma de Convolução (Efeito do passado no futuro)
+         vectg1duf := 0.0; vectg2duf := 0.0; vectg3duf := 0.0; vectg4duf := 0.0;
+         FOR i20 := 1 TO Nm DO
+             vectg1duf := vectg1duf + vect_g1[i20]*duf1[i20];
+             vectg2duf := vectg2duf + vect_g2[i20]*duf2[i20];
+             vectg3duf := vectg3duf + vect_g3[i20]*duf3[i20];
+             vectg4duf := vectg4duf + vect_g4[i20]*duf4[i20];
+         END_FOR
+         
+         // Resposta Livre Final = Valor Atual (PV) + Predição do Passado
          f1[j17]:= process_value + vectg1duf;
-		 f2[j17]:= process_value + vectg2duf;
-		 f3[j17]:= process_value + vectg3duf;
-		 f4[j17]:= process_value + vectg4duf;
-	END_FOR
-	delta_u1_aux := 0.0;
-	delta_u2_aux := 0.0;
-	delta_u3_aux := 0.0;
-	delta_u4_aux := 0.0;
-	FOR i21 := 1 TO Horizonte_Predicao-1 DO
-		delta_u1_aux := delta_u1_aux + K1_VECTOR[i21]*(setpoint - f1[i21+1]);
-		delta_u2_aux := delta_u2_aux + K2_VECTOR[i21]*(setpoint - f2[i21+1]);
-		delta_u3_aux := delta_u3_aux + K3_VECTOR[i21]*(setpoint - f3[i21+1]);
-		delta_u4_aux := delta_u4_aux + K4_VECTOR[i21]*(setpoint - f4[i21+1]);
-	END_FOR
-	IF delta_u1_aux + u_k >= 10 THEN
-		delta_u1 := 10-u_k;
-	ELSIF u_k + delta_u1_aux <= 0 THEN
-		delta_u1 := 0-u_k;
-	ELSE
-		delta_u1 := delta_u1_aux;
-	END_IF
-	IF delta_u2_aux + u_k >= 10 THEN
-		delta_u2 := 10-u_k;
-	ELSIF u_k + delta_u2_aux <= 0 THEN
-		delta_u2 := 0-u_k;
-	ELSE
-		delta_u2 := delta_u2_aux;
-	END_IF
-	IF delta_u3_aux + u_k >= 10 THEN
-		delta_u3 := 10-u_k;
-	ELSIF u_k + delta_u3_aux <= 0 THEN
-		delta_u3 := 0-u_k;
-	ELSE
-		delta_u3 := delta_u3_aux;
-	END_IF
-	IF delta_u4_aux + u_k >= 10 THEN
-		delta_u4 := 10-u_k;
-	ELSIF u_k + delta_u4_aux <= 0 THEN
-		delta_u4 := 0-u_k;
-	ELSE
-		delta_u4 := delta_u4_aux;
-	END_IF
-	A1 :=  1/(ABS(100 - process_value)+1);
-	B2 :=  1/(ABS(185 - process_value)+1);
-	C3 :=  1/(ABS(290 - process_value)+1);
-	D4 :=  1/(ABS(390 - process_value)+1);
-	FOR i22:= 0 TO Nm-1 DO
-		IF i22 < (Nm-1) THEN
-			duf1[Nm-i22] := duf1[Nm-i22-1];
-			duf2[Nm-i22] := duf2[Nm-i22-1];
-			duf3[Nm-i22] := duf3[Nm-i22-1];
-			duf4[Nm-i22] := duf4[Nm-i22-1];
-		ELSE				
-			IF process_value <= 100 THEN
-				duf1[Nm-i22] := delta_u1;
-				duf2[Nm-i22] := delta_u1;
-				duf3[Nm-i22] := delta_u1;
-				duf4[Nm-i22] := delta_u1;
-			END_IF
-			IF (process_value < 185) AND (process_value > 100) THEN
-				duf1[Nm-i22] := (A1*delta_u1+B2*delta_u2)/(A1+B2);
-				duf2[Nm-i22] := (A1*delta_u1+B2*delta_u2)/(A1+B2);
-				duf3[Nm-i22] := (A1*delta_u1+B2*delta_u2)/(A1+B2);
-				duf4[Nm-i22] := (A1*delta_u1+B2*delta_u2)/(A1+B2);
-			END_IF
-			IF process_value = 185 THEN
-				duf1[Nm-i22] := delta_u2;
-				duf2[Nm-i22] := delta_u2;
-				duf3[Nm-i22] := delta_u2;
-				duf4[Nm-i22] := delta_u2;
-			END_IF
-			IF (process_value < 290) AND (process_value > 185) THEN
-				duf1[Nm-i22] := (B2*delta_u2+C3*delta_u3)/(B2+C3);
-				duf2[Nm-i22] := (B2*delta_u2+C3*delta_u3)/(B2+C3);
-				duf3[Nm-i22] := (B2*delta_u2+C3*delta_u3)/(B2+C3);
-				duf4[Nm-i22] := (B2*delta_u2+C3*delta_u3)/(B2+C3);
-			END_IF
-			IF process_value = 290 THEN
-				duf1[Nm-i22] := delta_u3;
-				duf2[Nm-i22] := delta_u3;
-				duf3[Nm-i22] := delta_u3;
-				duf4[Nm-i22] := delta_u3;
-			END_IF
-			IF (process_value < 390) AND (process_value > 290) THEN
-				duf1[Nm-i22] := (C3*delta_u3+D4*delta_u4)/(C3+D4);
-				duf2[Nm-i22] := (C3*delta_u3+D4*delta_u4)/(C3+D4);
-				duf3[Nm-i22] := (C3*delta_u3+D4*delta_u4)/(C3+D4);
-				duf4[Nm-i22] := (C3*delta_u3+D4*delta_u4)/(C3+D4);
-			END_IF
-			IF (process_value >= 390) THEN
-				duf1[Nm-i22] := delta_u4;
-				duf2[Nm-i22] := delta_u4;
-				duf3[Nm-i22] := delta_u4;
-				duf4[Nm-i22] := delta_u4;
-			END_IF
-		END_IF
-	END_FOR
-	u_k1_ant := u_k;
-	u_k1 := delta_u1 + u_k1_ant;
-	u_k2_ant := u_k;
-	u_k2 := delta_u2 + u_k2_ant;
-	u_k3_ant := u_k;
-	u_k3 := delta_u3 + u_k3_ant;
-	u_k4_ant := u_k;
-	u_k4 := delta_u4 + u_k4_ant;
-	
-	IF process_value <= 100 THEN
-		u_k_temp := u_k1;
-	END_IF
-	IF (process_value < 185) AND (process_value > 100) THEN
-		u_k_temp := (A1*u_k1+B2*u_k2)/(A1+B2);
-	END_IF
-	IF process_value = 185 THEN
-		u_k_temp := u_k2;
-	END_IF
-	IF (process_value < 290) AND (process_value > 185) THEN
-		u_k_temp := (B2*u_k2+C3*u_k3)/(B2+C3);
-	END_IF
-	IF process_value = 290 THEN
-		u_k_temp := u_k3;
-	END_IF
-	IF (process_value < 390) AND (process_value > 290) THEN
-		u_k_temp := (C3*u_k3+D4*u_k4)/(C3+D4);
-	END_IF
-	IF (process_value >= 390) THEN
-		u_k_temp := u_k4;
-	END_IF
-	
-	IF u_k_temp > 10 THEN
-		u_k := 10;
-	ELSE
-		IF u_k_temp < 0 THEN
-			u_k := 0;
-		ELSE
-			u_k := u_k_temp;
-		END_IF
-	END_IF
-END_IF
+         f2[j17]:= process_value + vectg2duf;
+         f3[j17]:= process_value + vectg3duf;
+         f4[j17]:= process_value + vectg4duf;
+    END_FOR
+
+    // 2.2 Cálculo do Incremento de Controle (Delta U)
+    // Delta U = K * (Setpoint - Resposta Livre)
+    delta_u1_aux := 0.0; delta_u2_aux := 0.0; delta_u3_aux := 0.0; delta_u4_aux := 0.0;
+    
+    FOR i21 := 1 TO Horizonte_Predicao-1 DO
+        delta_u1_aux := delta_u1_aux + K1_VECTOR[i21]*(setpoint - f1[i21+1]);
+        delta_u2_aux := delta_u2_aux + K2_VECTOR[i21]*(setpoint - f2[i21+1]);
+        delta_u3_aux := delta_u3_aux + K3_VECTOR[i21]*(setpoint - f3[i21+1]);
+        delta_u4_aux := delta_u4_aux + K4_VECTOR[i21]*(setpoint - f4[i21+1]);
+    END_FOR;
+
+    // 2.3 Saturação Anti-Windup (Limitação do Incremento)
+    // Impede que o controle calculado exceda os limites físicos (0-10V)
+    // --- Modelo 1 ---
+    IF delta_u1_aux + u_k >= 10 THEN delta_u1 := 10-u_k;
+    ELSIF u_k + delta_u1_aux <= 0 THEN delta_u1 := 0-u_k;
+    ELSE delta_u1 := delta_u1_aux; END_IF;
+    
+    // --- Modelo 2 ---
+    IF delta_u2_aux + u_k >= 10 THEN delta_u2 := 10-u_k;
+    ELSIF u_k + delta_u2_aux <= 0 THEN delta_u2 := 0-u_k;
+    ELSE delta_u2 := delta_u2_aux; END_IF;
+    
+    // --- Modelo 3 ---
+    IF delta_u3_aux + u_k >= 10 THEN delta_u3 := 10-u_k;
+    ELSIF u_k + delta_u3_aux <= 0 THEN delta_u3 := 0-u_k;
+    ELSE delta_u3 := delta_u3_aux; END_IF;
+    
+    // --- Modelo 4 ---
+    IF delta_u4_aux + u_k >= 10 THEN delta_u4 := 10-u_k;
+    ELSIF u_k + delta_u4_aux <= 0 THEN delta_u4 := 0-u_k;
+    ELSE delta_u4 := delta_u4_aux; END_IF;
+
+    // 2.4 Cálculo dos Pesos de Ponderação (Lógica Fuzzy/Linear)
+    // Define a importância de cada modelo com base na proximidade do nível atual (PV)
+    // Pontos centrais: 100mm, 185mm, 290mm, 390mm
+    A1 :=  1/(ABS(100 - process_value)+1);
+    B2 :=  1/(ABS(185 - process_value)+1);
+    C3 :=  1/(ABS(290 - process_value)+1);
+    D4 :=  1/(ABS(390 - process_value)+1);
+
+    // 2.5 Atualização do Vetor de Histórico (Shift Register) com Ponderação
+    // Desloca os valores antigos e insere o novo Delta U ponderado na posição 1
+    FOR i22:= 0 TO Nm-1 DO
+        IF i22 < (Nm-1) THEN
+            // Deslocamento (posição i vai para i+1)
+            duf1[Nm-i22] := duf1[Nm-i22-1];
+            duf2[Nm-i22] := duf2[Nm-i22-1];
+            duf3[Nm-i22] := duf3[Nm-i22-1];
+            duf4[Nm-i22] := duf4[Nm-i22-1];
+        ELSE                
+            // Inserção do novo valor com Ponderação Suave entre Modelos
+            // Região 1: < 100mm (Apenas Modelo 1)
+            IF process_value <= 100 THEN
+                duf1[Nm-i22] := delta_u1;
+                duf2[Nm-i22] := delta_u1;
+                duf3[Nm-i22] := delta_u1;
+                duf4[Nm-i22] := delta_u1;
+            END_IF
+            // Região 2: 100mm a 185mm (Média ponderada entre Modelo 1 e 2)
+            IF (process_value < 185) AND (process_value > 100) THEN
+                duf1[Nm-i22] := (A1*delta_u1+B2*delta_u2)/(A1+B2);
+                duf2[Nm-i22] := (A1*delta_u1+B2*delta_u2)/(A1+B2);
+                duf3[Nm-i22] := (A1*delta_u1+B2*delta_u2)/(A1+B2);
+                duf4[Nm-i22] := (A1*delta_u1+B2*delta_u2)/(A1+B2);
+            END_IF
+            // Ponto exato 185mm
+            IF process_value = 185 THEN
+                duf1[Nm-i22] := delta_u2;
+                duf2[Nm-i22] := delta_u2;
+                duf3[Nm-i22] := delta_u2;
+                duf4[Nm-i22] := delta_u2;
+            END_IF
+            // Região 3: 185mm a 290mm (Média ponderada entre Modelo 2 e 3)
+            IF (process_value < 290) AND (process_value > 185) THEN
+                duf1[Nm-i22] := (B2*delta_u2+C3*delta_u3)/(B2+C3);
+                duf2[Nm-i22] := (B2*delta_u2+C3*delta_u3)/(B2+C3);
+                duf3[Nm-i22] := (B2*delta_u2+C3*delta_u3)/(B2+C3);
+                duf4[Nm-i22] := (B2*delta_u2+C3*delta_u3)/(B2+C3);
+            END_IF
+            // Ponto exato 290mm
+            IF process_value = 290 THEN
+                duf1[Nm-i22] := delta_u3;
+                duf2[Nm-i22] := delta_u3;
+                duf3[Nm-i22] := delta_u3;
+                duf4[Nm-i22] := delta_u3;
+            END_IF
+            // Região 4: 290mm a 390mm (Média ponderada entre Modelo 3 e 4)
+            IF (process_value < 390) AND (process_value > 290) THEN
+                duf1[Nm-i22] := (C3*delta_u3+D4*delta_u4)/(C3+D4);
+                duf2[Nm-i22] := (C3*delta_u3+D4*delta_u4)/(C3+D4);
+                duf3[Nm-i22] := (C3*delta_u3+D4*delta_u4)/(C3+D4);
+                duf4[Nm-i22] := (C3*delta_u3+D4*delta_u4)/(C3+D4);
+            END_IF
+            // Região 5: > 390mm (Apenas Modelo 4)
+            IF (process_value >= 390) THEN
+                duf1[Nm-i22] := delta_u4;
+                duf2[Nm-i22] := delta_u4;
+                duf3[Nm-i22] := delta_u4;
+                duf4[Nm-i22] := delta_u4;
+            END_IF
+        END_IF
+    END_FOR
+
+    // 2.6 Integração da Ação de Controle (u[k] = u[k-1] + delta_u)
+    u_k1_ant := u_k; 
+    u_k1 := delta_u1 + u_k1_ant; // Controle sugerido pelo Modelo 1
+    u_k2_ant := u_k; 
+    u_k2 := delta_u2 + u_k2_ant; // Controle sugerido pelo Modelo 2
+    u_k3_ant := u_k; 
+    u_k3 := delta_u3 + u_k3_ant; // Controle sugerido pelo Modelo 3
+    u_k4_ant := u_k; 
+    u_k4 := delta_u4 + u_k4_ant; // Controle sugerido pelo Modelo 4
+    
+    // 2.7 Cálculo Final da Saída Ponderada (u_k_temp)
+    // Aplica a mesma lógica de ponderação usada no histórico para a saída atual
+    IF process_value <= 100 THEN
+        u_k_temp := u_k1;
+    END_IF
+    IF (process_value < 185) AND (process_value > 100) THEN
+        u_k_temp := (A1*u_k1+B2*u_k2)/(A1+B2);
+    END_IF
+    IF process_value = 185 THEN
+        u_k_temp := u_k2;
+    END_IF
+    IF (process_value < 290) AND (process_value > 185) THEN
+        u_k_temp := (B2*u_k2+C3*u_k3)/(B2+C3);
+    END_IF
+    IF process_value = 290 THEN
+        u_k_temp := u_k3;
+    END_IF
+    IF (process_value < 390) AND (process_value > 290) THEN
+        u_k_temp := (C3*u_k3+D4*u_k4)/(C3+D4);
+    END_IF
+    IF (process_value >= 390) THEN
+        u_k_temp := u_k4;
+    END_IF
+    
+    // 2.8 Saturação Final de Segurança (0-10V)
+    IF u_k_temp > 10 THEN
+        u_k := 10;
+    ELSE
+        IF u_k_temp < 0 THEN
+            u_k := 0;
+        ELSE
+            u_k := u_k_temp; // Envia o valor calculado para a saída física
+        END_IF
+    END_IF
+END_IF;
+
+// 3. BLOCO DE DESLIGAMENTO
 IF B_desliga THEN
-	u_k := 0;
+    u_k := 0; // Zera a saída se o botão de desliga for acionado considerando botão NA
 END_IF
